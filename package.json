@@ -9,6 +9,8 @@
   "files": [
     "bin",
     "skills",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
     "README.md",
     "LICENSE"
   ],

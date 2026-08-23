@@ -26,7 +26,8 @@ Import or refresh the generated docs:
 ```bash
 python3 .codex/skills/minknote-docs-import/scripts/import_docs.py import \
   --source "/path/to/MinkNote journal" \
-  --site-root "/path/to/jekyll-site"
+  --site-root "/path/to/jekyll-site" \
+  --ignore changelog.md roadmap.md
 ```
 
 Use the installed path for the current agent. For Cursor this may be `.cursor/skills/minknote-docs-import/scripts/import_docs.py`; for Codex user-level installs this may be `~/.codex/skills/minknote-docs-import/scripts/import_docs.py`.
@@ -39,6 +40,7 @@ Use the installed path for the current agent. For Cursor this may be `.cursor/sk
 - `--nav-data-path`: generated navigation data path inside the site. Defaults to `_data/minknote_docs.yml`.
 - `--base-url`: generated docs URL prefix. Defaults to `/apps/minknote/docs`.
 - `--layout`: Jekyll layout written into generated front matter. Defaults to `minknote-docs`.
+- `--ignore`: one or more source filenames or source-relative glob patterns to skip. Nothing is ignored unless this option is passed.
 
 ## Modes
 
@@ -47,7 +49,7 @@ Use the installed path for the current agent. For Cursor this may be `.cursor/sk
 ## What The Script Does
 
 1. Reads every `.md` file under the source folder.
-2. Skips `changelog.md` and `roadmap.md`.
+2. Skips only files matched by `--ignore`, when provided.
 3. Maps folders to sidebar categories:
    - source root -> Getting Started
    - `HowTo/` -> HowTo

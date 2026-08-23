@@ -61,7 +61,8 @@ Run the importer directly from the repo while iterating:
 ```bash
 python3 skills/minknote-docs-import/scripts/import_docs.py import \
   --source "/path/to/MinkNote journal" \
-  --site-root "/path/to/jekyll-site"
+  --site-root "/path/to/jekyll-site" \
+  --ignore changelog.md roadmap.md
 ```
 
 Run the installer locally:

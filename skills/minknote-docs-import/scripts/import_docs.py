@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-SKIP_STEMS = {"changelog", "roadmap"}
 CATEGORY_DIRS = {
     "howto": ("howto", "HowTo"),
     "reference": ("reference", "Reference"),
@@ -31,6 +31,7 @@ class ImportConfig:
     nav_data_path: Path
     base_url: str
     layout: str
+    ignore: tuple[str, ...]
 
     @property
     def docs_root(self) -> Path:
@@ -128,15 +129,25 @@ def output_path(docs_root: Path, category: str, slug: str, is_index: bool) -> Pa
     return docs_root / category / f"{slug}.md"
 
 
+def should_ignore(relative: Path, ignore: tuple[str, ...]) -> bool:
+    relative_path = relative.as_posix()
+    filename = relative.name
+    return any(
+        fnmatch.fnmatchcase(relative_path, pattern) or fnmatch.fnmatchcase(filename, pattern)
+        for pattern in ignore
+    )
+
+
 def collect_notes(config: ImportConfig) -> list[dict]:
     notes = []
     for path in sorted(config.source.rglob("*.md")):
-        if path.stem.lower() in SKIP_STEMS:
+        relative = path.relative_to(config.source)
+        if should_ignore(relative, config.ignore):
             continue
         text = path.read_text(encoding="utf-8")
         meta, body = parse_front_matter(text)
         title = meta.get("title") or path.stem
-        category, category_label = category_for(path.relative_to(config.source))
+        category, category_label = category_for(relative)
         notes.append(
             {
                 "path": path,
@@ -337,6 +348,13 @@ def main() -> None:
     )
     parser.add_argument("--base-url", default="/apps/minknote/docs", help="Public URL prefix for generated docs.")
     parser.add_argument("--layout", default="minknote-docs", help="Jekyll layout for generated pages.")
+    parser.add_argument(
+        "--ignore",
+        action="extend",
+        default=[],
+        nargs="+",
+        help="One or more source filenames or source-relative glob patterns to skip.",
+    )
     args = parser.parse_args()
 
     source = Path(args.source).expanduser().resolve()
@@ -354,6 +372,7 @@ def main() -> None:
         nav_data_path=args.nav_data_path,
         base_url=normalise_base_url(args.base_url),
         layout=args.layout,
+        ignore=tuple(args.ignore),
     )
     notes = import_docs(config)
     print(f"Imported {len(notes)} docs pages from {source}")
