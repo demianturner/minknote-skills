@@ -1,0 +1,19 @@
+{
+  "name": "minknote-skills",
+  "version": "0.1.0",
+  "description": "Installable agent skills for MinkNote workflows.",
+  "type": "module",
+  "bin": {
+    "minknote-skills": "./bin/minknote-skills.js"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
