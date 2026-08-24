@@ -38,7 +38,7 @@ npx github:demianturner/minknote-skills list
 
 ### minknote-docs-import
 
-Exports a target MinkNote journal folder into a Jekyll documentation section. It converts note front matter, rewrites `minknote://open/<uuid>` links to generated web URLs, copies images, replaces YouTube shortcodes, and writes the navigation data file used by the Jekyll template.
+Exports a target MinkNote journal folder into a Jekyll documentation section. It converts note front matter, rewrites `minknote://open/<uuid>` links to generated web URLs, copies images, replaces YouTube shortcodes, and writes the navigation data file used by the Jekyll template. Root notes become Getting Started; each top-level journal folder becomes its own sidebar section.
 
 The Jekyll layout, CSS, and `_config.yml` changes are intentionally out of scope. This skill assumes those site pieces already exist.
 

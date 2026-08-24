@@ -52,8 +52,8 @@ Use the installed path for the current agent. For Cursor this may be `.cursor/sk
 2. Skips only files matched by `--ignore`, when provided.
 3. Maps folders to sidebar categories:
    - source root -> Getting Started
-   - `HowTo/` -> HowTo
-   - `Reference/` -> Reference
+   - each top-level folder -> a sidebar section named after that folder
+     (for example `Editing and Formatting/`, `Reference/`)
 4. Writes Jekyll front matter with `layout`, `title`, `category`, `permalink`, `uuid`, and `generated`.
 5. Rewrites `minknote://open/<uuid>` links to matching generated docs URLs.
 6. Copies `i/` images into the generated docs image folder and rewrites image paths.

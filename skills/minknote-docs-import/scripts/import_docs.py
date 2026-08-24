@@ -11,10 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-CATEGORY_DIRS = {
-    "howto": ("howto", "HowTo"),
-    "reference": ("reference", "Reference"),
-}
+ROOT_CATEGORY = ("getting-started", "Getting Started")
 YOUTUBE_RE = re.compile(r"\{\{youtube:([A-Za-z0-9_-]+)\}\}")
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((i/[^)]+)\)")
 NOTE_LINK_RE = re.compile(r"\[([^\]]+)\]\(minknote://open/([0-9A-Fa-f-]+)\)")
@@ -68,12 +65,10 @@ def display_title(title: str) -> str:
 
 
 def category_for(relative: Path) -> tuple[str, str]:
-    parts = [part.lower() for part in relative.parts]
-    if "howto" in parts:
-        return CATEGORY_DIRS["howto"]
-    if "reference" in parts:
-        return CATEGORY_DIRS["reference"]
-    return "getting-started", "Getting Started"
+    if len(relative.parts) == 1:
+        return ROOT_CATEGORY
+    folder = relative.parts[0]
+    return slugify(folder), folder
 
 
 def sort_key(title: str) -> tuple[int, str]:
@@ -161,7 +156,13 @@ def collect_notes(config: ImportConfig) -> list[dict]:
             }
         )
 
-    notes.sort(key=lambda note: (note["category"], note["order"]))
+    notes.sort(
+        key=lambda note: (
+            0 if note["category"] == ROOT_CATEGORY[0] else 1,
+            note["category_label"].lower(),
+            note["order"],
+        )
+    )
 
     used_slugs: dict[str, int] = {}
     index_assigned = False
@@ -297,6 +298,11 @@ def clear_generated_output(config: ImportConfig) -> None:
 
     if config.nav_data_file.exists():
         config.nav_data_file.unlink()
+
+    if config.docs_root.exists():
+        for child in config.docs_root.iterdir():
+            if child.is_dir() and child.name != "images" and not any(child.rglob("*.md")):
+                shutil.rmtree(child)
 
 
 def import_docs(config: ImportConfig) -> list[dict]:
