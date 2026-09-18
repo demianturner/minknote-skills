@@ -16,7 +16,7 @@ const usage = `Usage:
 
 Examples:
   npx github:demianturner/minknote-skills list
-  npx github:demianturner/minknote-skills install minknote-docs-import --agent codex
+  npx github:demianturner/minknote-skills install publish-to-jekyll --agent codex
   npx github:demianturner/minknote-skills install all --dest .cursor/skills --force
 `;
 
