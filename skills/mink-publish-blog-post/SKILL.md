@@ -1,5 +1,5 @@
 ---
-name: publish-to-blog
+name: mink-publish-blog-post
 description: >-
   Publish a MinkNote markdown article as a dated post in a Jekyll blog section.
   Uses the article's `i/` image folder, optimises and copies images, writes the
@@ -8,7 +8,7 @@ description: >-
   Use when the user wants to publish, import, or add a MinkNote note to a blog.
 ---
 
-# Publish to Blog
+# Publish Blog Post
 
 Use this skill when a user wants to publish a MinkNote-authored Markdown article
 as a blog post on a Jekyll site.
@@ -35,7 +35,7 @@ Collect these before running. Only the first three are required.
 Publish an article:
 
 ```bash
-python3 .codex/skills/publish-to-blog/scripts/publish_blog.py \
+python3 .codex/skills/mink-publish-blog-post/scripts/publish_blog.py \
   --article "/path/to/Article.md" \
   --site-root "/path/to/jekyll-site" \
   --domain muse23.com \
@@ -49,14 +49,14 @@ Preview first with `--dry-run` — it reports the post path, URL, every image
 conversion, the plugin, and the llms.txt change without writing anything:
 
 ```bash
-python3 .codex/skills/publish-to-blog/scripts/publish_blog.py \
+python3 .codex/skills/mink-publish-blog-post/scripts/publish_blog.py \
   --article "/path/to/Article.md" --site-root "/path/to/jekyll-site" \
   --domain muse23.com --dry-run
 ```
 
 Use the installed path for the current agent. For Cursor this may be
-`.cursor/skills/publish-to-blog/scripts/publish_blog.py`; for Codex user-level
-installs this may be `~/.codex/skills/publish-to-blog/scripts/publish_blog.py`.
+`.cursor/skills/mink-publish-blog-post/scripts/publish_blog.py`; for Codex user-level
+installs this may be `~/.codex/skills/mink-publish-blog-post/scripts/publish_blog.py`.
 
 ## Options
 

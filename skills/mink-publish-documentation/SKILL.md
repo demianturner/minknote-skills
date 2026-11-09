@@ -1,5 +1,5 @@
 ---
-name: publish-to-jekyll
+name: mink-publish-documentation
 description: >-
   Export a MinkNote journal folder into a Jekyll documentation section.
   Converts MinkNote front matter, rewrites minknote:// links to web URLs, copies
@@ -7,7 +7,7 @@ description: >-
   publishing or synchronising MinkNote-authored docs to a Jekyll site.
 ---
 
-# Publish to Jekyll
+# Publish Documentation
 
 Use this skill when a user wants to publish a MinkNote journal folder as Jekyll documentation.
 
@@ -24,13 +24,13 @@ The script owns generated Markdown pages, copied images, and the navigation data
 Publish or refresh the generated docs:
 
 ```bash
-python3 .codex/skills/publish-to-jekyll/scripts/import_docs.py import \
+python3 .codex/skills/mink-publish-documentation/scripts/import_docs.py import \
   --source "/path/to/MinkNote journal" \
   --site-root "/path/to/jekyll-site" \
   --ignore changelog.md roadmap.md
 ```
 
-Use the installed path for the current agent. For Cursor this may be `.cursor/skills/publish-to-jekyll/scripts/import_docs.py`; for Codex user-level installs this may be `~/.codex/skills/publish-to-jekyll/scripts/import_docs.py`.
+Use the installed path for the current agent. For Cursor this may be `.cursor/skills/mink-publish-documentation/scripts/import_docs.py`; for Codex user-level installs this may be `~/.codex/skills/mink-publish-documentation/scripts/import_docs.py`.
 
 ## Important Options
 
