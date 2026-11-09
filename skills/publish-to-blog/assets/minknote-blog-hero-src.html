@@ -1,0 +1,9 @@
+{% assign hero = include.path | default: '' | strip %}
+{% assign hero_src = '' %}
+{% if hero != '' %}
+  {% assign hero_src = hero %}
+  {% assign hero_prefix = hero | slice: 0, 1 %}
+  {% unless hero contains '://' or hero_prefix == '/' %}
+    {% assign hero_src = '/apps/minknote/blog/images/' | append: hero %}
+  {% endunless %}
+{% endif %}

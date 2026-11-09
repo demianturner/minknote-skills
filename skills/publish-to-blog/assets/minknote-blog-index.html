@@ -1,0 +1,22 @@
+{% assign posts = site.pages | where_exp: "p", "p.minknote_blog == true" | sort: "date" | reverse %}
+{% if posts.size > 0 %}
+  <ul class="blog-list">
+    {% for post in posts %}
+      {% include minknote-blog-hero-src.html path=post.hero_image %}
+      <li>
+        <a class="blog-card{% if hero_src != '' %} blog-card--hero{% endif %}" href="{{ post.url }}">
+          {% if hero_src != '' %}
+            <img class="blog-card-hero" src="{{ hero_src }}" alt="{{ post.title | escape }}" />
+          {% endif %}
+          <div class="blog-card-body">
+            <time datetime="{{ post.date | date: '%Y-%m-%d' }}">{{ post.date | date: "%-d %B %Y" }}</time>
+            <h2>{{ post.title }}</h2>
+            {% if post.description %}<p>{{ post.description }}</p>{% endif %}
+          </div>
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="blog-empty">Posts will appear here soon.</p>
+{% endif %}

@@ -7,25 +7,25 @@ Installable agent skills for MinkNote workflows.
 Install a specific skill into Codex:
 
 ```bash
-npx github:demianturner/minknote-skills install publish-to-jekyll --agent codex
+npx github:demianturner/minknote-skills install <skill> --agent codex
 ```
 
 Install into a repository-local Cursor skills folder:
 
 ```bash
-npx github:demianturner/minknote-skills install publish-to-jekyll --agent cursor
+npx github:demianturner/minknote-skills install <skill> --agent cursor
 ```
 
 Install into any skills folder:
 
 ```bash
-npx github:demianturner/minknote-skills install publish-to-jekyll --dest .cursor/skills
+npx github:demianturner/minknote-skills install <skill> --dest .cursor/skills
 ```
 
 Replace an existing installed copy:
 
 ```bash
-npx github:demianturner/minknote-skills install publish-to-jekyll --agent codex --force
+npx github:demianturner/minknote-skills install <skill> --agent codex --force
 ```
 
 List available skills:
@@ -34,7 +34,25 @@ List available skills:
 npx github:demianturner/minknote-skills list
 ```
 
+Install every skill:
+
+```bash
+npx github:demianturner/minknote-skills install all --agent codex
+```
+
+For example, install the blog publisher:
+
+```bash
+npx github:demianturner/minknote-skills install publish-to-blog --agent codex
+```
+
 ## Skills
+
+### publish-to-blog
+
+Publishes a MinkNote markdown article as a dated post in a Jekyll blog section. It derives the title, slug, and date, copies and optimises the article's `i/` images with macOS `sips`, rewrites image links to absolute blog paths, writes the post front matter (`hero-image`, `show-hero`), installs the `_plugins/minknote_blog.rb` plugin when missing, and adds the post to `llms.txt` when the site has one. Supports `--dry-run` and idempotent re-runs.
+
+Assumes a Jekyll blog with a blog section, a `minknote-post` layout, and a blog index that lists pages marked `minknote_blog`. Reference layout files are bundled in the skill's `assets/` folder.
 
 ### publish-to-jekyll
 
@@ -48,6 +66,15 @@ The Jekyll layout, CSS, and `_config.yml` changes are intentionally out of scope
 
 ```text
 skills/
+  publish-to-blog/
+    SKILL.md
+    assets/
+      minknote-post.html
+      minknote-blog-index.html
+      minknote-blog-hero-src.html
+      minknote_blog.rb.txt
+    scripts/
+      publish_blog.py
   publish-to-jekyll/
     SKILL.md
     scripts/
@@ -58,7 +85,17 @@ bin/
 
 ## Development
 
-Run the publisher directly from the repo while iterating:
+Run the blog publisher directly from the repo while iterating:
+
+```bash
+python3 skills/publish-to-blog/scripts/publish_blog.py \
+  --article "/path/to/Article.md" \
+  --site-root "/path/to/jekyll-site" \
+  --domain muse23.com \
+  --dry-run
+```
+
+Run the docs publisher directly from the repo:
 
 ```bash
 python3 skills/publish-to-jekyll/scripts/import_docs.py import \
@@ -71,5 +108,5 @@ Run the installer locally:
 
 ```bash
 node bin/minknote-skills.js list
-node bin/minknote-skills.js install publish-to-jekyll --dest /tmp/minknote-skills-test --force
+node bin/minknote-skills.js install publish-to-blog --dest /tmp/minknote-skills-test --force
 ```

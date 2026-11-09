@@ -1,0 +1,76 @@
+{% assign hero = page.hero_image | default: "" | strip %}
+{% assign hero_src = "" %}
+{% if hero != "" %}
+  {% assign hero_src = hero %}
+  {% assign hero_prefix = hero | slice: 0, 1 %}
+  {% unless hero contains "://" or hero_prefix == "/" %}
+    {% assign hero_src = "/apps/minknote/blog/images/" | append: hero %}
+  {% endunless %}
+{% endif %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ page.title }} — MinkNote</title>
+  <meta name="description" content="{{ page.description | default: page.title }}" />
+  <link rel="canonical" href="{{ site.url }}{{ page.url }}" />
+
+  <meta property="og:title" content="{{ page.title }} — MinkNote" />
+  <meta property="og:description" content="{{ page.description | default: page.title }}" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="{{ site.url }}{{ page.url }}" />
+  <meta property="og:site_name" content="MinkNote" />
+  {% if page.date %}
+  <meta property="article:published_time" content="{{ page.date | date_to_xmlschema }}" />
+  {% endif %}
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{{ page.title }} — MinkNote" />
+  <meta name="twitter:description" content="{{ page.description | default: page.title }}" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/apps/minknote/assets/css/style.css" />
+  <link rel="stylesheet" href="/apps/minknote/assets/css/docs.css" />
+  <link rel="stylesheet" href="/apps/minknote/assets/css/blog.css" />
+  <script src="/assets/js/mixpanel.js"></script>
+  <script src="/apps/minknote/assets/js/partials.js"></script>
+  {% if hero_src != '' %}
+  <meta property="og:image" content="{% if hero_src contains '://' %}{{ hero_src }}{% else %}{{ site.url }}{{ hero_src }}{% endif %}" />
+  <meta name="twitter:image" content="{% if hero_src contains '://' %}{{ hero_src }}{% else %}{{ site.url }}{{ hero_src }}{% endif %}" />
+  {% else %}
+  <meta property="og:image" content="{{ site.url }}/apps/minknote/images/hero.png" />
+  <meta name="twitter:image" content="{{ site.url }}/apps/minknote/images/hero.png" />
+  {% endif %}
+</head>
+<body class="blog-body">
+  <mn-nav></mn-nav>
+
+  <main class="blog-post">
+    <div class="container blog-post-inner">
+      <nav class="docs-breadcrumb" aria-label="Breadcrumb">
+        <a href="/apps/minknote/blog/">Blog</a>
+        <span aria-hidden="true">/</span>
+        <span>{{ page.title }}</span>
+      </nav>
+
+      <article class="docs-article">
+        {% if page.show_hero and hero_src != "" %}
+        <img class="blog-post-hero" src="{{ hero_src }}" alt="{{ page.title | escape }}" />
+        {% endif %}
+        {% if page.date %}
+        <time class="blog-post-date" datetime="{{ page.date | date: '%Y-%m-%d' }}">{{ page.date | date: "%-d %B %Y" }}</time>
+        {% endif %}
+        <h1>{{ page.title }}</h1>
+        <div class="docs-prose">
+          {{ content }}
+        </div>
+      </article>
+    </div>
+  </main>
+
+  <mn-footer></mn-footer>
+  <script src="/apps/minknote/assets/js/main.js"></script>
+</body>
+</html>
