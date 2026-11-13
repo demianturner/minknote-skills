@@ -10,18 +10,6 @@ Install a specific skill into Codex:
 npx github:demianturner/minknote-skills install <skill> --agent codex
 ```
 
-Install into a repository-local Cursor skills folder:
-
-```bash
-npx github:demianturner/minknote-skills install <skill> --agent cursor
-```
-
-Install into any skills folder:
-
-```bash
-npx github:demianturner/minknote-skills install <skill> --dest .cursor/skills
-```
-
 Replace an existing installed copy:
 
 ```bash
@@ -60,6 +48,10 @@ assumptions but do different jobs:
 a Jekyll install, a layout for the target section, and the site's CSS. They
 transform Markdown, copy images, and write front matter; they do not create the
 Jekyll site itself.
+
+| Skill | Source input | Output |
+| --- | --- | --- |
+| `mink-download-reddit-posts` | Reddit post bookmarks in a Raindrop collection | Markdown notes and images in category folders for MinkNote |
 
 ### mink-publish-blog-post
 
