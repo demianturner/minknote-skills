@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import hashlib
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,6 +43,18 @@ def clean_name(value, limit=120):
     value = re.sub(r'[/\\*"<>|\x00-\x1f]', '-', value)
     value = re.sub(r'\s+', ' ', value).strip(' .-')[:limit].strip(' .-')
     return value or 'Untitled'
+
+
+def note_filename(title, pid):
+    """Use ASCII letters, digits, hyphens and underscores in the stem."""
+    text = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').decode()
+    text = re.sub(r'[^A-Za-z0-9_-]+', '-', text).strip('-_')
+    text = text[:105].rstrip('-_') or 'post'
+    return f'{text}-{pid}.md'
+
+
+def stable_uuid(pid):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, 'https://www.reddit.com/comments/' + pid + '/')).upper()
 
 
 def atomic(path, data):
@@ -301,13 +314,16 @@ def main():
                         raise ValueError('existing note UUID does not match manifest')
                 folder = target.parent if target is not None else root / category
                 title, body, stats, warns = load_post(pid, b['link'], folder)
+                old_target = target
                 if target is None:
-                    target = folder / (clean_name(title) + '.md')
-                    if target.exists():
-                        target = folder / (clean_name(title, 105) + ' - ' + pid + '.md')
+                    target = folder / note_filename(title, pid)
                     if target.exists():
                         raise ValueError('target filename already exists: ' + str(target))
-                    note_id = str(uuid.uuid4()).upper()
+                    note_id = stable_uuid(pid)
+                elif not re.fullmatch(r'[A-Za-z0-9_-]+\.md', target.name):
+                    target = folder / note_filename(old_target.stem, pid)
+                    if target.exists():
+                        raise ValueError('renamed target already exists: ' + str(target))
                 source = 'https://www.reddit.com/comments/' + pid + '/'
                 fm = ('---\nuuid: ' + json.dumps(note_id) + '\ntitle: ' + json.dumps(title, ensure_ascii=False) + '\nredditPostId: ' + json.dumps(pid) + '\nstarred: false\nisPinned: false\n---\n')
                 note = fm + '\n# ' + title + '\n\n' + (stats + '\n\n' if stats else '') + (body + '\n\n' if body else '') + '[' + source + '](' + source + ')\n'
@@ -315,9 +331,13 @@ def main():
                     create_exclusive(target, note.encode('utf-8'))
                     summary['imported'].append(pid)
                 else:
-                    if target.read_bytes() != original:
+                    if old_target.read_bytes() != original:
                         raise ValueError('existing note changed during download')
-                    atomic(target, note.encode('utf-8'))
+                    if target == old_target:
+                        atomic(target, note.encode('utf-8'))
+                    else:
+                        create_exclusive(target, note.encode('utf-8'))
+                        old_target.unlink()
                     summary['updated'].append(pid)
                 posts[pid] = {'uuid': note_id, 'path': str(target.relative_to(root)), 'source': source, 'collection_id': payload['collection_id'], 'bookmark_id': b.get('bookmark_id')}
                 atomic(state_path, (json.dumps(state, indent=2, ensure_ascii=False) + '\n').encode())
