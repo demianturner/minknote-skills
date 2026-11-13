@@ -147,6 +147,25 @@ def fetch(url, max_bytes=15_000_000):
 
 
 
+def embed_metadata(page, pid):
+    """Read metadata for the requested post only, never for a comment."""
+    soup = BeautifulSoup(page, 'html.parser')
+    for element in soup.find_all('shreddit-screenview-data'):
+        try:
+            payload = json.loads(element.get('data', ''))
+        except (ValueError, TypeError):
+            continue
+        post = payload.get('post') or {}
+        if str(post.get('id', '')).lower() != 't3_' + pid:
+            continue
+        kind = post.get('type')
+        if not isinstance(kind, str):
+            continue
+        hostname = (urllib.parse.urlsplit(post.get('url') or '').hostname or '').lower()
+        return kind.lower() == 'video' and hostname == 'v.redd.it'
+    return None
+
+
 def load_post(pid, url, folder):
     data, _, _ = fetch('https://www.reddit.com/comments/' + pid + '.rss', 5_000_000)
     root = ET.fromstring(data)
@@ -163,6 +182,28 @@ def load_post(pid, url, folder):
     body = soup.select_one('div.md')
     pieces = []
     warnings = []
+    stats = None
+    is_reddit_video = None
+    sub = re.search(r'/r/([^/]+)/comments/', urllib.parse.urlsplit(url).path, re.I)
+    if sub:
+        try:
+            embed, _, _ = fetch('https://embed.reddit.com/r/' + urllib.parse.quote(sub.group(1)) + '/comments/' + pid + '/', 5_000_000)
+            page = embed.decode('utf-8', errors='replace')
+            is_reddit_video = embed_metadata(page, pid)
+            up = re.search(r'<faceplate-number number="(\d+)" pretty></faceplate-number>\s*upvotes', page)
+            comments = re.search(r'View ([\d,]+) comments?', page)
+            if up and comments:
+                stats = f"> {up.group(1)} upvotes · {comments.group(1)} comments"
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403, 429):
+                raise
+            warnings.append('Embed metadata unavailable: HTTP ' + str(e.code))
+        except (OSError, urllib.error.URLError) as e:
+            warnings.append('Embed metadata unavailable: ' + str(e))
+    if stats is None:
+        warnings.append('Statistics unavailable')
+    if is_reddit_video is None:
+        warnings.append('Video status unavailable; inspect the original post')
     image_refs = []
     if body:
         for tag in body.find_all('a', href=True):
@@ -170,7 +211,7 @@ def load_post(pid, url, folder):
         for image in body.find_all('img', src=True):
             image_refs.append(image)
     # Image-post RSS contains the original image in an anchor outside div.md.
-    if not image_refs:
+    if not image_refs and not is_reddit_video:
         anchor = next((a for a in soup.find_all('a', href=True) if urllib.parse.urlsplit(a['href']).hostname in {'i.redd.it', 'preview.redd.it'}), None)
         if anchor:
             image_refs.append(anchor)
@@ -203,26 +244,10 @@ def load_post(pid, url, folder):
         markdown = markdownify(str(body), heading_style='ATX', bullets='-').strip()
         if markdown:
             pieces.append(markdown)
+    if is_reddit_video:
+        pieces.append('{{reddit:' + pid + '}}')
     if not pieces:
         warnings.append('No text or image found; inspect original for link, video, gallery or unavailable content')
-    stats = None
-    sub = re.search(r'/r/([^/]+)/comments/', urllib.parse.urlsplit(url).path, re.I)
-    if sub:
-        try:
-            embed, _, _ = fetch('https://embed.reddit.com/r/' + urllib.parse.quote(sub.group(1)) + '/comments/' + pid + '/', 5_000_000)
-            page = embed.decode('utf-8', errors='replace')
-            up = re.search(r'<faceplate-number number="(\d+)" pretty></faceplate-number>\s*upvotes', page)
-            comments = re.search(r'View ([\d,]+) comments?', page)
-            if up and comments:
-                stats = f"> {up.group(1)} upvotes · {comments.group(1)} comments"
-        except urllib.error.HTTPError as e:
-            if e.code in (401, 403, 429):
-                raise
-            warnings.append('Statistics unavailable: HTTP ' + str(e.code))
-        except (OSError, urllib.error.URLError) as e:
-            warnings.append('Statistics unavailable: ' + str(e))
-    if stats is None:
-        warnings.append('Statistics unavailable')
     return title, '\n\n'.join(pieces), stats, warnings
 
 
