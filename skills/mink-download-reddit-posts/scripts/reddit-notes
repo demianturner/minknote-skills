@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Import a Raindrop bookmark JSON export into a folder of Markdown notes."""
+import argparse
+import fcntl
+import html
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+import hashlib
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+try:
+    from bs4 import BeautifulSoup
+    from markdownify import markdownify
+except ImportError:
+    sys.exit('Install dependencies: python3 -m pip install markdownify beautifulsoup4')
+
+UA = 'reddit-saved-notes/1.0 (personal Markdown export)'
+POST = re.compile(r'/comments/([a-z0-9]+)(?:/|$)', re.I)
+UUID = re.compile(r'(?m)^uuid:\s*["\']?([0-9a-fA-F-]{36})')
+LINK = re.compile(r'https?://(?:www\.|old\.|new\.|m\.)?reddit\.com/[^\s)\]<>"\']+', re.I)
+
+
+def post_id(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or (parsed.hostname or '').lower() not in {'reddit.com', 'www.reddit.com', 'old.reddit.com', 'new.reddit.com', 'm.reddit.com'}:
+        return None
+    m = POST.search(parsed.path)
+    return m.group(1).lower() if m else None
+
+
+def clean_name(value, limit=120):
+    value = re.sub(r'[:]', ' - ', value)
+    value = re.sub(r'[/\\*"<>|\x00-\x1f]', '-', value)
+    value = re.sub(r'\s+', ' ', value).strip(' .-')[:limit].strip(' .-')
+    return value or 'Untitled'
+
+
+def atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.reddit-import-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def create_exclusive(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.reddit-import-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.link(name, path)  # atomic and fails if the destination exists
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def index_notes(root):
+    found = {}
+    if not root.exists():
+        return found
+    for path in root.rglob('*.md'):
+        if any(part.startswith('.') for part in path.relative_to(root).parts):
+            continue
+        try:
+            content = path.read_text(encoding='utf-8')
+        except (UnicodeError, OSError):
+            continue
+        ids = {post_id(html.unescape(u)) for u in LINK.findall(content)} - {None}
+        # The final link is the source in the earlier importer. Embedded links to
+        # other posts are not sufficient to identify the note.
+        source = re.search(r'(?m)^\[(https?://[^\]]+)\]\(\1\)\s*$', content)
+        declared = re.search(r'(?m)^redditPostId:\s*["\']?([a-z0-9]+)', content, re.I)
+        identity = declared.group(1).lower() if declared else post_id(source.group(1)) if source else None
+        if identity and identity in ids:
+            found.setdefault(identity, []).append(path)
+    return found
+
+
+_next_request = 0.0
+
+
+def fetch(url, max_bytes=15_000_000):
+    global _next_request
+    for attempt in range(4):
+        delay = _next_request - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        request = urllib.request.Request(url, headers={'User-Agent': UA})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                remaining = response.headers.get('x-ratelimit-remaining')
+                reset = response.headers.get('x-ratelimit-reset')
+                if remaining is not None and reset is not None:
+                    try:
+                        if float(remaining) <= 0:
+                            _next_request = time.monotonic() + min(max(float(reset), 1), 300) + 1
+                    except ValueError:
+                        pass
+                if int(response.headers.get('Content-Length', 0)) > max_bytes:
+                    raise ValueError('response too large')
+                data = response.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    raise ValueError('response too large')
+                return data, response.headers.get_content_type(), response.url
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 3:
+                raise
+            wait = e.headers.get('Retry-After') or e.headers.get('x-ratelimit-reset')
+            try:
+                delay = float(wait)
+            except (TypeError, ValueError):
+                delay = 30 * (2 ** attempt)
+            if delay > 300:
+                raise
+            _next_request = time.monotonic() + max(delay, 1) + 1
+
+
+
+def load_post(pid, url, folder):
+    data, _, _ = fetch('https://www.reddit.com/comments/' + pid + '.rss', 5_000_000)
+    root = ET.fromstring(data)
+    ns = {'a': 'http://www.w3.org/2005/Atom'}
+    entries = root.findall('a:entry', ns)
+    entry = next((e for e in entries if (e.findtext('a:id', '', ns)).lower() == 't3_' + pid), None)
+    if entry is None:
+        raise ValueError('RSS did not contain the requested post')
+    title = re.sub(r'\s*:\s*reddit\.com$', '', entry.findtext('a:title', '', ns)).strip()
+    if not title:
+        raise ValueError('missing post title')
+    content = entry.findtext('a:content', '', ns)
+    soup = BeautifulSoup(content, 'html.parser')
+    body = soup.select_one('div.md')
+    pieces = []
+    warnings = []
+    image_refs = []
+    if body:
+        for tag in body.find_all('a', href=True):
+            tag['href'] = urllib.parse.urljoin('https://www.reddit.com', tag['href'])
+        for image in body.find_all('img', src=True):
+            image_refs.append(image)
+    # Image-post RSS contains the original image in an anchor outside div.md.
+    if not image_refs:
+        anchor = next((a for a in soup.find_all('a', href=True) if urllib.parse.urlsplit(a['href']).hostname in {'i.redd.it', 'preview.redd.it'}), None)
+        if anchor:
+            image_refs.append(anchor)
+    for i, element in enumerate(image_refs, 1):
+        src = element.get('src') or element.get('href')
+        parsed = urllib.parse.urlsplit(src)
+        if parsed.scheme != 'https' or parsed.hostname not in {'i.redd.it', 'preview.redd.it', 'i.imgur.com'}:
+            warnings.append('unsupported image host: ' + src)
+            continue
+        raw, mime, final_url = fetch(src)
+        if urllib.parse.urlsplit(final_url).hostname not in {'i.redd.it', 'preview.redd.it', 'i.imgur.com'} or not mime.startswith('image/'):
+            raise ValueError('unexpected image response')
+        ext = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp'}.get(mime)
+        if not ext:
+            raise ValueError('unsupported image type: ' + mime)
+        name = f'{pid}-{i}{ext}'
+        asset = folder / 'i' / name
+        if asset.exists() and asset.read_bytes() != raw:
+            name = f'{pid}-{i}-{hashlib.sha256(raw).hexdigest()[:12]}{ext}'
+            asset = folder / 'i' / name
+            if asset.exists() and asset.read_bytes() != raw:
+                raise ValueError('image filename collision: ' + str(asset))
+        if not asset.exists():
+            atomic(asset, raw)
+        if element.name == 'img':
+            element['src'] = 'i/' + name
+        else:
+            pieces.append('![](i/' + name + ')')
+    if body:
+        markdown = markdownify(str(body), heading_style='ATX', bullets='-').strip()
+        if markdown:
+            pieces.append(markdown)
+    if not pieces:
+        warnings.append('No text or image found; inspect original for link, video, gallery or unavailable content')
+    stats = None
+    sub = re.search(r'/r/([^/]+)/comments/', urllib.parse.urlsplit(url).path, re.I)
+    if sub:
+        try:
+            embed, _, _ = fetch('https://embed.reddit.com/r/' + urllib.parse.quote(sub.group(1)) + '/comments/' + pid + '/', 5_000_000)
+            page = embed.decode('utf-8', errors='replace')
+            up = re.search(r'<faceplate-number number="(\d+)" pretty></faceplate-number>\s*upvotes', page)
+            comments = re.search(r'View ([\d,]+) comments?', page)
+            if up and comments:
+                stats = f"> {up.group(1)} upvotes · {comments.group(1)} comments"
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403, 429):
+                raise
+            warnings.append('Statistics unavailable: HTTP ' + str(e.code))
+        except (OSError, urllib.error.URLError) as e:
+            warnings.append('Statistics unavailable: ' + str(e))
+    if stats is None:
+        warnings.append('Statistics unavailable')
+    return title, '\n\n'.join(pieces), stats, warnings
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--input', type=Path, required=True)
+    p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--preview', action='store_true')
+    p.add_argument('--limit', type=int)
+    p.add_argument('--tag-priority', action='append', default=[])
+    args = p.parse_args()
+    if args.limit is not None and args.limit < 1:
+        p.error('--limit must be positive')
+    payload = json.loads(args.input.read_text(encoding='utf-8'))
+    bookmarks = payload['bookmarks']
+    if not isinstance(bookmarks, list) or 'collection_id' not in payload:
+        p.error('input must have collection_id and bookmarks')
+    root = args.output.resolve()
+    existing = index_notes(root)
+    state_path = root / '.reddit-import' / 'manifest.json'
+    state = json.loads(state_path.read_text()) if state_path.exists() else {'version': 1, 'posts': {}}
+    posts = state['posts']
+    seen = set()
+    summary = {'imported': [], 'updated': [], 'failed': [], 'unsupported': [], 'ambiguous': [], 'warnings': []}
+    candidates = []
+    for b in bookmarks:
+        url = b.get('link', '')
+        pid = post_id(url)
+        if not pid:
+            summary['unsupported'].append(url)
+            continue
+        if pid in seen:
+            continue
+        seen.add(pid)
+        matches = existing.get(pid, [])
+        if len(matches) > 1:
+            summary['ambiguous'].append({'id': pid, 'paths': [str(x) for x in matches]})
+            continue
+        if not matches and pid in posts:
+            summary['ambiguous'].append({'id': pid, 'reason': 'previously imported note missing or source identity changed'})
+            continue
+        tags = b.get('tags') or []
+        if len(tags) > 1:
+            category = next((t for t in args.tag_priority if t in tags), None)
+            if category is None:
+                summary['ambiguous'].append({'id': pid, 'reason': 'multiple tags without a matching priority', 'tags': tags})
+                continue
+        else:
+            category = tags[0] if tags else 'Uncategorised'
+        candidates.append((pid, b, clean_name(category), matches[0] if matches else None))
+    if args.limit:
+        candidates = candidates[:args.limit]
+    if args.preview:
+        summary['would_import'] = [{'id': pid, 'title': b.get('title'), 'folder': category} for pid,b,category,path in candidates if path is None]
+        summary['would_update'] = [{'id': pid, 'path': str(path)} for pid,b,category,path in candidates if path is not None]
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    lock = root / '.reddit-import' / 'lock'
+    lock.parent.mkdir(exist_ok=True)
+    with lock.open('w') as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit('Another import is running for this destination')
+        state = json.loads(state_path.read_text()) if state_path.exists() else {'version': 1, 'posts': {}}
+        posts = state['posts']
+        existing = index_notes(root)
+        for pid, b, category, preview_path in candidates:
+            matches = existing.get(pid, [])
+            if len(matches) > 1 or (not matches and pid in posts):
+                summary['ambiguous'].append({'id': pid, 'reason': 'existing note missing or ambiguous'})
+                continue
+            target = matches[0] if matches else None
+            if target != preview_path:
+                summary['ambiguous'].append({'id': pid, 'reason': 'matching note changed since scan'})
+                continue
+            original = None
+            note_id = None
+            try:
+                if target is not None:
+                    original = target.read_bytes()
+                    match = UUID.search(original.decode('utf-8'))
+                    if not match:
+                        raise ValueError('existing note has no valid UUID')
+                    note_id = str(uuid.UUID(match.group(1))).upper()
+                    recorded_id = posts.get(pid, {}).get('uuid')
+                    if recorded_id and str(uuid.UUID(recorded_id)).upper() != note_id:
+                        raise ValueError('existing note UUID does not match manifest')
+                folder = target.parent if target is not None else root / category
+                title, body, stats, warns = load_post(pid, b['link'], folder)
+                if target is None:
+                    target = folder / (clean_name(title) + '.md')
+                    if target.exists():
+                        target = folder / (clean_name(title, 105) + ' - ' + pid + '.md')
+                    if target.exists():
+                        raise ValueError('target filename already exists: ' + str(target))
+                    note_id = str(uuid.uuid4()).upper()
+                source = 'https://www.reddit.com/comments/' + pid + '/'
+                fm = ('---\nuuid: ' + json.dumps(note_id) + '\ntitle: ' + json.dumps(title, ensure_ascii=False) + '\nredditPostId: ' + json.dumps(pid) + '\nstarred: false\nisPinned: false\n---\n')
+                note = fm + '\n# ' + title + '\n\n' + (stats + '\n\n' if stats else '') + (body + '\n\n' if body else '') + '[' + source + '](' + source + ')\n'
+                if original is None:
+                    create_exclusive(target, note.encode('utf-8'))
+                    summary['imported'].append(pid)
+                else:
+                    if target.read_bytes() != original:
+                        raise ValueError('existing note changed during download')
+                    atomic(target, note.encode('utf-8'))
+                    summary['updated'].append(pid)
+                posts[pid] = {'uuid': note_id, 'path': str(target.relative_to(root)), 'source': source, 'collection_id': payload['collection_id'], 'bookmark_id': b.get('bookmark_id')}
+                atomic(state_path, (json.dumps(state, indent=2, ensure_ascii=False) + '\n').encode())
+                if warns:
+                    summary['warnings'].append({'id': pid, 'messages': warns})
+                time.sleep(1)
+            except urllib.error.HTTPError as e:
+                summary['failed'].append({'id': pid, 'error': 'HTTP ' + str(e.code)})
+                if e.code in (401, 403, 429):
+                    summary['stopped'] = 'Reddit denied access or remained rate limited after bounded retries; retry later.'
+                    break
+            except (OSError, ValueError, UnicodeError, ET.ParseError, urllib.error.URLError) as e:
+                summary['failed'].append({'id': pid, 'error': str(e)})
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary['failed'] or summary['ambiguous']:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

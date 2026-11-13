@@ -85,6 +85,10 @@ top-level journal folder becomes its own sidebar section.
 Expects a `minknote-docs` layout and a docs sidebar that reads the generated
 navigation YAML.
 
+### mink-download-reddit-posts
+
+Imports Reddit post bookmarks from a selected Raindrop collection into category folders as MinkNote Markdown notes. Re-running refreshes existing notes while preserving their UUIDs. Raindrop tags are used for folder selection and are not written into notes.
+
 ## Repository Layout
 
 Each folder under `skills/` is one installable skill, copied as a unit to the
