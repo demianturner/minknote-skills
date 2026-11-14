@@ -312,7 +312,7 @@ def load_post(pid, url, folder):
         if markdown:
             pieces.append(markdown)
     if is_reddit_video:
-        pieces.append('{{reddit:' + pid + '}}')
+        pieces.insert(0, '{{reddit:' + pid + '}}')
     if not pieces:
         warnings.append('No text or image found; inspect original for link, video, gallery or unavailable content')
     return title, '\n\n'.join(pieces), stats, warnings
