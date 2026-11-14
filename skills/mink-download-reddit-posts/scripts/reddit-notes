@@ -318,9 +318,135 @@ def load_post(pid, url, folder):
     return title, '\n\n'.join(pieces), stats, warnings
 
 
+
+def seed_video_ledger(root, collection_id):
+    ledger_path = root / 'reddit-video-ledger.json'
+    if ledger_path.exists():
+        raise ValueError('video ledger already exists')
+    manifest_path = root / '.reddit-import' / 'manifest.json'
+    state = json.loads(manifest_path.read_text()) if manifest_path.exists() else {'posts': {}}
+    indexed = index_notes(root)
+    records = {}
+    for pid, rec in state['posts'].items():
+        if str(rec.get('collection_id')) != str(collection_id):
+            continue
+        matches = indexed.get(pid, [])
+        target = (root / rec['path']).resolve()
+        if root not in target.parents or len(matches) != 1 or matches[0].resolve() != target:
+            raise ValueError('manifest note missing or ambiguous: ' + pid)
+        fm = parse_frontmatter(target.read_bytes())
+        if str(uuid.UUID(fm['uuid'])).upper() != str(uuid.UUID(rec['uuid'])).upper():
+            raise ValueError('manifest UUID mismatch: ' + pid)
+        bookmark = rec.get('bookmark_id')
+        if not isinstance(bookmark, int):
+            raise ValueError('manifest bookmark ID missing: ' + pid)
+        records[pid] = {'bookmark_id': bookmark, 'status': 'existing'}
+    atomic(ledger_path, (json.dumps({'version': 1, 'collection_id': collection_id, 'posts': records}, indent=2) + '\n').encode())
+    print(json.dumps({'seeded': len(records)}))
+
+
+def import_new_videos(args, payload, root):
+    ledger_path = root / 'reddit-video-ledger.json'
+    if not ledger_path.exists():
+        raise ValueError('initialise the video ledger first')
+    ledger = json.loads(ledger_path.read_text())
+    if ledger.get('version') != 1 or ledger.get('collection_id') != payload['collection_id'] or not isinstance(ledger.get('posts'), dict):
+        raise ValueError('video ledger does not match the collection')
+    summary = {'imported': [], 'non_video': [], 'skipped': 0, 'failed': [], 'unsupported': [], 'unknown': []}
+    def candidates():
+        known_bookmarks = {r.get('bookmark_id') for r in ledger['posts'].values()}
+        seen = set()
+        for b in payload['bookmarks']:
+            bid = b.get('bookmark_id')
+            if not isinstance(bid, int):
+                summary['failed'].append({'error': 'bookmark ID missing'})
+                continue
+            if b.get('tags'):
+                continue
+            pid = post_id(b.get('link', ''))
+            if bid in known_bookmarks or (pid and (pid in ledger['posts'] or pid in seen)):
+                summary['skipped'] += 1
+                continue
+            if not pid:
+                summary['unsupported'].append(bid)
+                continue
+            seen.add(pid)
+            yield pid, b
+    pending = list(candidates())
+    if args.limit:
+        pending = pending[:args.limit]
+    if args.preview:
+        summary['candidates'] = len(pending)
+        print(json.dumps(summary))
+        return
+    lock = root / '.reddit-import' / 'lock'
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open('w') as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit('Another import is running for this destination')
+        ledger = json.loads(ledger_path.read_text())
+        manifest_path = root / '.reddit-import' / 'manifest.json'
+        state = json.loads(manifest_path.read_text()) if manifest_path.exists() else {'version': 1, 'posts': {}}
+        existing = index_notes(root)
+        for pid, b in pending:
+            if pid in ledger['posts'] or b['bookmark_id'] in {r.get('bookmark_id') for r in ledger['posts'].values()}:
+                continue
+            try:
+                if pid in state['posts'] or existing.get(pid):
+                    summary['unknown'].append({'id': pid, 'reason': 'existing note or manifest record requires reconciliation'})
+                    continue
+                sub = re.search(r'/r/([^/]+)/comments/', urllib.parse.urlsplit(b['link']).path, re.I)
+                if not sub:
+                    summary['unknown'].append({'id': pid, 'reason': 'subreddit missing from URL'})
+                    continue
+                data, _, _ = fetch('https://embed.reddit.com/r/' + urllib.parse.quote(sub.group(1)) + '/comments/' + pid + '/', 5_000_000)
+                video = embed_metadata(data.decode('utf-8', errors='replace'), pid)
+                if video is None:
+                    summary['unknown'].append({'id': pid, 'reason': 'video status unavailable'})
+                    continue
+                if not video:
+                    ledger['posts'][pid] = {'bookmark_id': b['bookmark_id'], 'status': 'non_video'}
+                    atomic(ledger_path, (json.dumps(ledger, indent=2) + '\n').encode())
+                    summary['non_video'].append(pid)
+                    continue
+                folder = root / 'Uncategorised'
+                title, body, stats, warns = load_post(pid, b['link'], folder)
+                if '{{reddit:' + pid + '}}' not in body:
+                    raise ValueError('video status could not be confirmed during import')
+                target = folder / note_filename(title, pid)
+                note_id = stable_uuid(pid)
+                frontmatter = {'uuid': note_id, 'title': title, 'redditPostId': pid, **creation_metadata(), 'starred': False, 'isPinned': False}
+                fm = '---\n' + yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False) + '---\n'
+                source = 'https://www.reddit.com/comments/' + pid + '/'
+                note = fm + '\n# ' + title + '\n\n' + (stats + '\n\n' if stats else '') + (body + '\n\n' if body else '') + '[' + source + '](' + source + ')\n'
+                create_exclusive(target, note.encode())
+                state['posts'][pid] = {'uuid': note_id, 'path': str(target.relative_to(root)), 'source': source, 'collection_id': payload['collection_id'], 'bookmark_id': b['bookmark_id']}
+                atomic(manifest_path, (json.dumps(state, indent=2, ensure_ascii=False) + '\n').encode())
+                ledger['posts'][pid] = {'bookmark_id': b['bookmark_id'], 'status': 'video'}
+                atomic(ledger_path, (json.dumps(ledger, indent=2) + '\n').encode())
+                summary['imported'].append(pid)
+                time.sleep(1)
+            except urllib.error.HTTPError as e:
+                summary['failed'].append({'id': pid, 'error': 'HTTP ' + str(e.code)})
+                if e.code in (401, 403, 429):
+                    summary['stopped'] = 'Reddit denied access or remained rate limited; retry later.'
+                    break
+            except (OSError, ValueError, UnicodeError, ET.ParseError, urllib.error.URLError) as e:
+                progress(f'Failed post {pid}: {type(e).__name__}')
+                summary['failed'].append({'id': pid, 'error': str(e)})
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary['failed'] or summary['unknown'] or summary['unsupported']:
+        sys.exit(1)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input', type=Path, required=True)
+    p.add_argument('--input', type=Path)
+    p.add_argument('--new-videos', action='store_true')
+    p.add_argument('--seed-video-ledger', action='store_true')
+    p.add_argument('--collection-id', type=int)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--preview', action='store_true')
     p.add_argument('--progress-log', type=Path, help='append progress to this file')
@@ -332,7 +458,18 @@ def main():
     progress('Importer started' + (' (preview)' if args.preview else ''))
     if args.limit is not None and args.limit < 1:
         p.error('--limit must be positive')
+    root = args.output.resolve()
+    if args.seed_video_ledger:
+        if args.collection_id is None or args.input or args.new_videos or args.preview:
+            p.error('--seed-video-ledger requires --collection-id and --output only')
+        seed_video_ledger(root, args.collection_id)
+        return
+    if not args.input:
+        p.error('--input is required')
     payload = json.loads(args.input.read_text(encoding='utf-8'))
+    if args.new_videos:
+        import_new_videos(args, payload, root)
+        return
     bookmarks = payload['bookmarks']
     progress(f'Loaded input JSON: {len(bookmarks)} bookmarks')
     if not isinstance(bookmarks, list) or 'collection_id' not in payload:
