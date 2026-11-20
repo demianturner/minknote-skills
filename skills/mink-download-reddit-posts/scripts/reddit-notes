@@ -226,6 +226,36 @@ def embed_metadata(page, pid):
     return None
 
 
+def gallery_images(pid):
+    """Read gallery order and original images for the requested post."""
+    data, _, _ = fetch('https://www.reddit.com/comments/' + pid + '.json?raw_json=1', 5_000_000)
+    payload = json.loads(data)
+    try:
+        posts = payload[0]['data']['children']
+    except (IndexError, KeyError, TypeError):
+        raise ValueError('Gallery metadata unavailable; use browser fallback') from None
+    post = next((p['data'] for p in posts if p.get('kind') == 't3' and p.get('data', {}).get('id', '').lower() == pid), None)
+    if not post:
+        raise ValueError('Gallery metadata does not contain the requested post')
+    items = post.get('gallery_data', {}).get('items') or []
+    metadata = post.get('media_metadata') or {}
+    if not items:
+        raise ValueError('Gallery image order unavailable; use browser fallback')
+    images = []
+    for item in items:
+        media = metadata.get(item.get('media_id'), {})
+        original = (media.get('s') or {}).get('u')
+        mime = media.get('m') or ''
+        if media.get('status') != 'valid' or not original or not mime.startswith('image/'):
+            raise ValueError('Gallery original image unavailable; use browser fallback')
+        parsed = urllib.parse.urlsplit(html.unescape(original))
+        if parsed.scheme != 'https' or parsed.hostname not in {'i.redd.it', 'preview.redd.it'}:
+            raise ValueError('Unsupported gallery image source')
+        # Reddit's source URL names the original media; preview parameters resize it.
+        images.append(urllib.parse.urlunsplit(('https', 'i.redd.it', parsed.path, '', '')))
+    return images
+
+
 def load_post(pid, url, folder):
     data, _, _ = fetch('https://www.reddit.com/comments/' + pid + '.rss', 5_000_000)
     root = ET.fromstring(data)
@@ -244,6 +274,7 @@ def load_post(pid, url, folder):
     warnings = []
     stats = None
     is_reddit_video = None
+    page = None
     sub = re.search(r'/r/([^/]+)/comments/', urllib.parse.urlsplit(url).path, re.I)
     if sub:
         try:
@@ -270,6 +301,16 @@ def load_post(pid, url, folder):
             tag['href'] = urllib.parse.urljoin('https://www.reddit.com', tag['href'])
         for image in body.find_all('img', src=True):
             image_refs.append(image)
+    # Gallery RSS can contain only a small thumbnail. Fetch the ordered original
+    # media metadata; do not silently treat a partial gallery as complete.
+    gallery = any(re.search(r'/gallery/' + re.escape(pid) + r'(?:/|$)', urllib.parse.urlsplit(a['href']).path, re.I) for a in soup.find_all('a', href=True))
+    if page and not gallery:
+        post_element = BeautifulSoup(page, 'html.parser').find('shreddit-post', id='t3_' + pid)
+        gallery = bool(post_element and post_element.get('post-type') == 'gallery')
+    if gallery:
+        image_refs = []
+        for src in gallery_images(pid):
+            image_refs.append(soup.new_tag('a', href=src))
     # Image-post RSS contains the original image in an anchor outside div.md.
     if not image_refs and not is_reddit_video:
         anchor = next((a for a in soup.find_all('a', href=True) if urllib.parse.urlsplit(a['href']).hostname in {'i.redd.it', 'preview.redd.it'}), None)
